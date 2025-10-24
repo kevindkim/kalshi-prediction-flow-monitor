@@ -1,19 +1,24 @@
 # Kalshi Prediction Flow Monitor
 
-A TypeScript CLI-based flow tracker using Kalshi that authenticates with API keys, streams live public trades via WebSockets, and filters for "big trades" ($5k+ notional trades) with helpful market details. Trades are anonymous, but gives a sense of where the big money is going. 
+Ever wonder where the biggest tickets on Kalshi are landing? This TypeScript CLI authenticates with your API keys, listens to the live trade firehose, and flags any order that clears a $5,000 notional bar. Trades stay anonymous, but the stream gives you instant signal on where size is moving.
 
-Future iterations will include market-level swings and a web interface, as well as notifications.
-
+Future iterations will layer in market swing detection, a lightweight web surface, and real-time notifications—this repo is the foundation.
 
 ## How It Works
-- `generateKalshiAuthHeaders` signs requests with RSA-PSS so we can log in over REST and open an authenticated WebSocket (`src/kalshi-signer.ts`, `src/kalshi-auth.ts`).
-– `KalshiClient` subscribes to the `trade` channel and emits each trade as an event (`src/kalshi-client.ts`).
-– `TradeFilter` tracks notional in USD using the side-specific dollar price and share count, emits `bigTrade` events when the value meets the $5,000 threshold (`src/trade-filter.ts`).
-– `getMarketDetails` fetches titles, rules, and expirations for the ticker so alerts include helpful context like market rules, name, prices, contracts (`src/kalshi-market-lookup.ts`).
+- After a quick RSA-PSS signing handshake (`src/kalshi-signer.ts`, `src/kalshi-auth.ts`), we grab a session token and open an authenticated WebSocket.
+- `KalshiClient` keeps the `trade` channel alive and emits every message as an event (`src/kalshi-client.ts`).
+- `TradeFilter` calculates notional in dollars using the taker’s side-specific price and emits `bigTrade` events when the value hits or exceeds $5,000 (`src/trade-filter.ts`).
+- `getMarketDetails` enriches those trades with titles, rules, and expirations so the alert reads like a headline instead of a ticker symbol (`src/kalshi-market-lookup.ts`).
 
 ```
 WebSocket → KalshiClient → TradeFilter (≥ $5k) → Market Lookup → Alert
 ```
+
+## Key Business Rules
+- Threshold defaults to **$5,000**; pass a different value into `new TradeFilter(thresholdUsd)` to adjust.
+- Notional uses the dollar field (`price_dollars * count`) to avoid cents-to-dollars mistakes.
+- YES/NO pricing is asymmetric—the filter picks `yes_price_dollars` or `no_price_dollars` based on the taker side.
+- Metadata failures fall back to the raw ticker, keeping the stream resilient even if REST lookups lag or rate limit.
 
 Sample alert:
 ```
@@ -35,21 +40,23 @@ Side: yes | Price: 68¢ | Size: 12,435 contracts
    ```bash
    npm install
    ```
-2. Create a `.env` (never commit secrets):
-   ```env
-   KALSHI_API_KEY_ID=your-key-id
-   KALSHI_PRIVATE_KEY_PATH=./kalshi-private-key.pem
+2. Copy `.env.example` to `.env` and fill in your credentials (never commit the real values):
+   ```bash
+   cp .env.example .env
    ```
-3. Store the PEM file referenced above (default path is `./kalshi-private-key.pem`). Only keep it locally.
+3. Store the PEM file referenced by `KALSHI_PRIVATE_KEY_PATH` (defaults to `./kalshi-private-key.pem`) locally and keep it out of version control.
 
 ## Running the Stream
 ```bash
-npx ts-node src/kalshi-client.ts
+npm run start
 ```
-You should see the authentication moment, subscription confirmation, and the "big trades" over $5k that meet the criteria with metadata. 
+This executes `ts-node src/kalshi-client.ts`, signs in, subscribes to the trade feed, and prints alerts whenever a trade clears the current threshold.
+
+## Customising & Extending
+- Want a different signal? Change the threshold or add volume/ticker filters inside `src/trade-filter.ts`.
+- Need alerts elsewhere? Swap the console logger in the `bigTrade` handler for Slack/Discord webhooks or a REST hook.
+- Watching high-velocity markets? Layer in caching inside `getMarketDetails` to minimize REST latency.
 
 ## Next Steps
-- Tests
-- Market-level swings (10% change in Yes)
-- Web interface
-- Notifications 
+- Add automated tests around the signer and notional math before you rely on this in production.
+- Instrument reconnection logic and structured logging if you plan to keep the monitor running 24/7.

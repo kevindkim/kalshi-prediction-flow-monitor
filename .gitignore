@@ -4,3 +4,4 @@ out/
 .seen/
 .env
 *.log
+kalshi-private-key.pem
