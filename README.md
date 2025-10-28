@@ -1,13 +1,13 @@
 # Kalshi Prediction Flow Monitor
 
-A TypeScript CLI-based flow tracker using Kalshi that authenticates with API keys, streams live public trades via WebSockets, and filters for "big trades" ($5k+ notional trades) with helpful market details. Trades are anonymous, but gives a sense of where the big money is going.
+A TypeScript CLI-based flow tracker using Kalshi that authenticates with API keys, streams live public trades via WebSockets, and filters for "big trades" ($5k+ notional trades) with helpful market details. Trades are anonymous, but gives a sense of where the big money is going. It's meant for you to read as it scrolls.
 
 Future iterations will include market-level swings and a web interface, as well as notifications.
 
-## How It Works
+## How It Works (Technically)
 - `generateKalshiAuthHeaders` signs requests with RSA-PSS so we can log in over REST and open an authenticated WebSocket (`src/kalshi-signer.ts`, `src/kalshi-auth.ts`).
 - `KalshiClient` subscribes to the `trade` channel and emits each trade as an event (`src/kalshi-client.ts`).
-- `TradeFilter` tracks notional in USD using the side-specific dollar price and share count, emits `bigTrade` events when the value meets the $5,000 bar (`src/trade-filter.ts`).
+- `TradeFilter` tracks total trade $ value in USD and emits `bigTrade` events when the value meets the $5,000 bar (`src/trade-filter.ts`).
 – `getMarketDetails` fetches titles, rules, and expirations for the ticker so alerts include plain-language context (`src/kalshi-market-lookup.ts`).
 
 ```
