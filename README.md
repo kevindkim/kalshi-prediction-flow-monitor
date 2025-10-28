@@ -34,7 +34,7 @@ Side: yes | Price: 68¢ | Size: 12,435 contracts
    ```bash
    npm install
    ```
-2. Copy `.env.example` to `.env` and fill in your credentials (never commit secrets):
+2. Copy `.env.example` to `.env` and fill in your Kalshi credentials, go to kalshi.com and sign up + generate an API Key.
    ```bash
    cp .env.example .env
    ```
