@@ -12,6 +12,8 @@ import { buildCloseAlert, buildOpportunityAlert, Notifier } from './notifier';
 import { formatOptionSymbol } from './option-symbol';
 import { contractsForRisk, round2, targetCloseDebit } from './spread-math';
 import { PlacedOrder } from './schwab-types';
+import { fetchRegime } from './regime';
+import { pairPutSpreads } from './position-monitor';
 
 /**
  * Bull put spread CLI.
@@ -207,25 +209,58 @@ async function cmdScan(args: Args, ctx: Ctx): Promise<SpreadCandidate[]> {
   printCandidates(best, cfg);
   if (args.flags.json) console.log(JSON.stringify(best, null, 2));
 
-  const good = best.filter((c) => isGoodPremium(c, cfg)).slice(0, cfg.maxAlertsPerScan);
+  const regime = await fetchRegime(client);
+  console.log(`\nRegime ${regime.label}: ${regime.reasons.join('; ')}`);
+
+  const portfolio = await openSpreadSummary(ctx);
+  let good = best.filter((c) => isGoodPremium(c, cfg));
+  const heldNames = good.filter((c) => (portfolio.perUnderlying[c.underlying] ?? 0) >= cfg.maxPerUnderlying);
+  if (heldNames.length > 0) {
+    console.log(`Skipping ${heldNames.map((c) => c.underlying).join(', ')}: already at ${cfg.maxPerUnderlying} open spread(s) per name.`);
+    good = good.filter((c) => !heldNames.includes(c));
+  }
+  good = good.slice(0, cfg.maxAlertsPerScan);
+
   if (good.length > 0) {
     console.log(`\n★ ${good.length} spread${good.length === 1 ? '' : 's'} with particularly good premium (score ≥ ${cfg.goodPremiumMinScore}).`);
-    if (args.flags.notify) {
-      const accountValue = await accountLiquidationValue(ctx);
-      const sent = await ctx.notifier.send(buildOpportunityAlert(good, cfg, accountValue), cfg.alertCooldownHours);
+    if (!regime.allowNewEntries) {
+      console.log('⏸ Regime says PAUSE — listing them but not sending an entry prompt.');
+    } else if (portfolio.openCount >= cfg.maxOpenSpreads) {
+      console.log(`⏸ ${portfolio.openCount} spreads already open (max ${cfg.maxOpenSpreads}) — not sending an entry prompt.`);
+    } else if (args.flags.notify) {
+      const sent = await ctx.notifier.send(
+        buildOpportunityAlert(good, cfg, portfolio.accountValue, regime),
+        cfg.alertCooldownHours
+      );
       console.log(sent ? '📣 Opportunity alert sent.' : '📣 Opportunity alert suppressed (cooldown / no channels).');
     }
   }
   return best;
 }
 
-async function accountLiquidationValue(ctx: Ctx): Promise<number | null> {
+interface OpenSpreadSummary {
+  accountValue: number | null;
+  openCount: number;
+  perUnderlying: Record<string, number>;
+  riskAtWork: number; // $ max loss across open spreads
+}
+
+async function openSpreadSummary(ctx: Ctx): Promise<OpenSpreadSummary> {
   try {
     const hash = await ctx.accountHash();
     const acct = await ctx.client.getAccountWithPositions(hash);
-    return acct.securitiesAccount.currentBalances?.liquidationValue ?? null;
-  } catch {
-    return null;
+    const spreads = pairPutSpreads(acct.securitiesAccount.positions ?? []);
+    const perUnderlying: Record<string, number> = {};
+    for (const s of spreads) perUnderlying[s.underlying] = (perUnderlying[s.underlying] ?? 0) + 1;
+    return {
+      accountValue: acct.securitiesAccount.currentBalances?.liquidationValue ?? null,
+      openCount: spreads.length,
+      perUnderlying,
+      riskAtWork: spreads.reduce((a, s) => a + s.maxLoss, 0),
+    };
+  } catch (error) {
+    console.warn('⚠️ Could not load account summary:', (error as Error).message);
+    return { accountValue: null, openCount: 0, perUnderlying: {}, riskAtWork: 0 };
   }
 }
 
@@ -286,11 +321,27 @@ async function cmdOpen(args: Args, ctx: Ctx): Promise<void> {
   }
 
   const hash = await ctx.accountHash();
+  const [regime, portfolio] = await Promise.all([fetchRegime(client), openSpreadSummary(ctx)]);
+  console.log(`Regime ${regime.label}: ${regime.reasons.join('; ')}`);
+  if (!regime.allowNewEntries && !args.flags.force) {
+    throw new Error('Regime filter says PAUSE for new entries. Add --force to override.');
+  }
+  if ((portfolio.perUnderlying[underlying] ?? 0) >= cfg.maxPerUnderlying) {
+    console.warn(`⚠️ Already ${portfolio.perUnderlying[underlying]} open spread(s) on ${underlying} (max ${cfg.maxPerUnderlying}).`);
+  }
+  if (portfolio.openCount >= cfg.maxOpenSpreads) {
+    console.warn(`⚠️ ${portfolio.openCount} spreads already open (max ${cfg.maxOpenSpreads}).`);
+  }
   let qty = args.flags.qty ? Number(args.flags.qty) : 0;
   if (!qty) {
-    const value = await accountLiquidationValue(ctx);
-    qty = value ? Math.max(1, contractsForRisk(value, cfg.riskPerTradePct, width, credit)) : 1;
-    console.log(`Sizing: ${qty} spread${qty === 1 ? '' : 's'} at ${Math.round(cfg.riskPerTradePct * 100)}% risk${value ? ` of $${Math.round(value)}` : ''}`);
+    const value = portfolio.accountValue;
+    const full = value ? contractsForRisk(value, cfg.riskPerTradePct, width, credit) : 1;
+    qty = Math.max(1, Math.floor(full * regime.sizeMultiplier));
+    console.log(
+      `Sizing: ${qty} spread${qty === 1 ? '' : 's'} at ${Math.round(cfg.riskPerTradePct * 100)}% risk${value ? ` of $${Math.round(value)}` : ''}${
+        regime.sizeMultiplier < 1 ? ` ×${regime.sizeMultiplier} regime multiplier` : ''
+      }`
+    );
   }
 
   const attachTarget = !args.flags['no-target'] && cfg.attachProfitTargetOnOpen;
@@ -416,7 +467,7 @@ Bull put spread monitor (Schwab)
   auth status                   Show token expiry
   scan [--notify] [--symbols SPY,QQQ] [--json]
   monitor [--notify] [--auto-target]
-  open SYM YYYY-MM-DD SHORT LONG [--qty N] [--credit X] [--no-target] [--trigger] [--preview] [--confirm]
+  open SYM YYYY-MM-DD SHORT LONG [--qty N] [--credit X] [--no-target] [--trigger] [--preview] [--force] [--confirm]
   close SPREAD_ID [--pct 0.5 | --debit X] [--day] [--replace] [--confirm]
   run [--notify] [--auto-target]   Loop during market hours
   test-notify                   Send a test email/SMS

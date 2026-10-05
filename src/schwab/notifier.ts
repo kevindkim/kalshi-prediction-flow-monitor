@@ -5,6 +5,7 @@ import nodemailer, { Transporter } from 'nodemailer';
 import { SpreadCandidate } from './put-spread-scanner';
 import { SpreadStatus } from './position-monitor';
 import { StrategyConfig } from './strategy-config';
+import { Regime } from './regime';
 
 /**
  * Sends "sell this" and "close this" prompts by email and/or SMS.
@@ -189,17 +190,29 @@ export function dayKey(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-export function buildOpportunityAlert(candidates: SpreadCandidate[], cfg: StrategyConfig, accountValue: number | null): Alert {
+export function buildOpportunityAlert(
+  candidates: SpreadCandidate[],
+  cfg: StrategyConfig,
+  accountValue: number | null,
+  regime?: Regime
+): Alert {
   const lines: string[] = [];
   lines.push(`${candidates.length} bull put spread${candidates.length === 1 ? '' : 's'} with rich premium right now:`);
+  if (regime) lines.push(`Regime ${regime.label}: ${regime.reasons.join('; ')}`);
   lines.push('');
+  const multiplier = regime?.sizeMultiplier ?? 1;
   for (const c of candidates) {
-    const qty = accountValue ? Math.max(1, Math.floor((accountValue * cfg.riskPerTradePct) / c.maxLoss)) : 1;
+    const fullQty = accountValue ? Math.floor((accountValue * cfg.riskPerTradePct) / c.maxLoss) : 1;
+    const qty = Math.max(1, Math.floor(fullQty * multiplier));
     lines.push(`▶ ${c.underlying} $${c.underlyingPrice.toFixed(2)} — sell ${c.expiration} ${c.shortStrike}/${c.longStrike} put spread  [score ${c.score}]`);
     lines.push(`   Credit ~${c.midCredit.toFixed(2)} mid (${c.naturalCredit.toFixed(2)} natural) on $${c.width} width → ${Math.round(c.returnOnRisk * 100)}% on risk, ${c.dte} DTE`);
     lines.push(`   Max profit $${c.maxProfit} / max loss $${c.maxLoss} per spread · POP ~${Math.round(c.probOtm * 100)}% · breakeven ${c.breakeven}`);
     for (const r of c.reasons) lines.push(`   • ${r}`);
-    lines.push(`   Size at ${Math.round(cfg.riskPerTradePct * 100)}% risk: ${qty} spread${qty === 1 ? '' : 's'}${accountValue ? '' : ' (account value unknown)'}`);
+    lines.push(
+      `   Size at ${Math.round(cfg.riskPerTradePct * 100)}% risk: ${qty} spread${qty === 1 ? '' : 's'}${
+        multiplier < 1 ? ` (×${multiplier} for the vol regime)` : ''
+      }${accountValue ? '' : ' (account value unknown)'}`
+    );
     lines.push(`   → npm run spreads -- open ${c.underlying} ${c.expiration} ${c.shortStrike} ${c.longStrike} --qty ${qty} --credit ${c.midCredit.toFixed(2)} --confirm`);
     lines.push('');
   }
