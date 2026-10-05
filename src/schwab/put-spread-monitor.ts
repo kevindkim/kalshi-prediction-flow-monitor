@@ -204,7 +204,7 @@ async function cmdScan(args: Args, ctx: Ctx): Promise<SpreadCandidate[]> {
   const symbols = args.flags.symbols ? String(args.flags.symbols).toUpperCase().split(',') : cfg.watchlist;
   console.log(`🔎 Scanning ${symbols.length} names for ${cfg.minDte}-${cfg.maxDte} DTE bull put spreads...`);
   const all = await scanner.scanWatchlist(symbols);
-  const best = bestPerExpiration(all);
+  const best = bestPerExpiration(all, cfg);
   console.log(`\n${all.length} candidate spreads, ${best.length} best-per-expiration:\n`);
   printCandidates(best, cfg);
   if (args.flags.json) console.log(JSON.stringify(best, null, 2));
@@ -227,6 +227,12 @@ async function cmdScan(args: Args, ctx: Ctx): Promise<SpreadCandidate[]> {
       console.log('⏸ Regime says PAUSE — listing them but not sending an entry prompt.');
     } else if (portfolio.openCount >= cfg.maxOpenSpreads) {
       console.log(`⏸ ${portfolio.openCount} spreads already open (max ${cfg.maxOpenSpreads}) — not sending an entry prompt.`);
+    } else if (portfolio.accountValue !== null && portfolio.riskAtWork >= portfolio.accountValue * cfg.maxAggregateRiskPct) {
+      console.log(
+        `⏸ $${Math.round(portfolio.riskAtWork)} of max loss already at work (cap ${Math.round(cfg.maxAggregateRiskPct * 100)}% = $${Math.round(
+          portfolio.accountValue * cfg.maxAggregateRiskPct
+        )}) — not sending an entry prompt.`
+      );
     } else if (args.flags.notify) {
       const sent = await ctx.notifier.send(
         buildOpportunityAlert(good, cfg, portfolio.accountValue, regime),
@@ -332,6 +338,7 @@ async function cmdOpen(args: Args, ctx: Ctx): Promise<void> {
   if (portfolio.openCount >= cfg.maxOpenSpreads) {
     console.warn(`⚠️ ${portfolio.openCount} spreads already open (max ${cfg.maxOpenSpreads}).`);
   }
+  const isIndex = cfg.indexSymbols.includes(underlying);
   let qty = args.flags.qty ? Number(args.flags.qty) : 0;
   if (!qty) {
     const value = portfolio.accountValue;
@@ -342,6 +349,17 @@ async function cmdOpen(args: Args, ctx: Ctx): Promise<void> {
         regime.sizeMultiplier < 1 ? ` ×${regime.sizeMultiplier} regime multiplier` : ''
       }`
     );
+  }
+  if (portfolio.accountValue !== null) {
+    const newRisk = (width - credit) * 100 * qty;
+    const cap = portfolio.accountValue * cfg.maxAggregateRiskPct;
+    if (portfolio.riskAtWork + newRisk > cap) {
+      console.warn(
+        `⚠️ This would put $${Math.round(portfolio.riskAtWork + newRisk)} of max loss at work, over the ${Math.round(
+          cfg.maxAggregateRiskPct * 100
+        )}% cap ($${Math.round(cap)}).${isIndex ? '' : ' Single names are the first to cut.'}`
+      );
+    }
   }
 
   const attachTarget = !args.flags['no-target'] && cfg.attachProfitTargetOnOpen;

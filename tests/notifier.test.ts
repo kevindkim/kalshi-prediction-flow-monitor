@@ -14,7 +14,8 @@ import { PlacedOrder } from '../src/schwab/schwab-types';
 test('opportunity alert includes a ready-to-run open command sized to risk', () => {
   const cfg = testConfig();
   const best = bestPerExpiration(
-    buildCandidates(spyChain(), { symbol: 'SPY', price: 600, closes: [], smas: { 50: 585, 200: 560 }, hv20: 18, nextEarnings: null }, cfg)
+    buildCandidates(spyChain(), { symbol: 'SPY', price: 600, closes: [], smas: { 50: 585, 200: 560 }, hv20: 18, nextEarnings: null }, cfg),
+    cfg
   );
   const alert = buildOpportunityAlert(best, cfg, 100_000);
   assert.match(alert.subject, /SPY \d+\/\d+ \d+% ROR/);

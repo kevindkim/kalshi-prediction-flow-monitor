@@ -5,19 +5,26 @@ import { clamp, round2 } from './spread-math';
  * Market-wide volatility regime used to scale (or pause) new put spread
  * entries. Two inputs, both free from Schwab's quotes endpoint:
  *
- *   VIX level      → position-size multiplier (vol-targeting; sell less when
- *                    vol is high because losses cluster there)
+ *   VIX level      → vol-targeting multiplier = min(1, vixReference / VIX).
+ *                    Moreira–Muir (2017) and Harvey et al. (2018) show scaling
+ *                    exposure inversely with volatility raises Sharpe and trims
+ *                    the left tail, because losses cluster when vol is high.
+ *                    Above a hard cap (default 35) no new entries at all.
  *   VIX / VIX3M    → term structure. Contango (< 1) is the normal, premium-
- *                    harvesting regime; backwardation (> 1) means a vol spike
- *                    is in progress and new short premium is paused.
+ *                    harvesting regime ~80% of the time; backwardation (≥ 1)
+ *                    means a vol spike is in progress and new short premium is
+ *                    paused. The flip back to contango is historically the
+ *                    richest entry window.
  *
- * Thresholds live in RegimeConfig; see docs/quant-strategy-research.md.
+ * See docs/quant-strategy-research.md §3.2 and §4.4.
  */
 export interface RegimeConfig {
   vixSymbol: string;
   vix3mSymbol: string;
-  /** Ascending VIX upper bounds and the multiplier applied at/below each. The last entry applies above the final bound. */
-  vixSizeBuckets: Array<{ maxVix: number; multiplier: number }>;
+  /** Full size at or below this VIX; above it size scales as vixReference / VIX. */
+  vixReference: number;
+  /** Floor for the multiplier so a spike never rounds size to zero on its own. */
+  minSizeMultiplier: number;
   /** Pause new entries when VIX / VIX3M is at or above this (1.0 = backwardation). */
   maxTermStructureRatio: number;
   /** Pause new entries when VIX is at or above this, regardless of term structure. */
@@ -27,13 +34,8 @@ export interface RegimeConfig {
 export const DEFAULT_REGIME_CONFIG: RegimeConfig = {
   vixSymbol: process.env.SPREAD_VIX_SYMBOL || '$VIX',
   vix3mSymbol: process.env.SPREAD_VIX3M_SYMBOL || '$VIX3M',
-  vixSizeBuckets: [
-    { maxVix: 15, multiplier: 1.0 },
-    { maxVix: 20, multiplier: 0.75 },
-    { maxVix: 25, multiplier: 0.5 },
-    { maxVix: 30, multiplier: 0.25 },
-    { maxVix: Infinity, multiplier: 0.1 },
-  ],
+  vixReference: Number(process.env.SPREAD_VIX_REFERENCE || 18),
+  minSizeMultiplier: Number(process.env.SPREAD_MIN_SIZE_MULTIPLIER || 0.1),
   maxTermStructureRatio: Number(process.env.SPREAD_MAX_TERM_STRUCTURE_RATIO || 1.0),
   maxVixForNewEntries: Number(process.env.SPREAD_MAX_VIX_FOR_ENTRY || 35),
 };
@@ -50,11 +52,9 @@ export interface Regime {
 }
 
 export function sizeMultiplierForVix(vix: number | null, cfg: RegimeConfig = DEFAULT_REGIME_CONFIG): number {
-  if (vix === null || !Number.isFinite(vix)) return 1;
-  for (const bucket of cfg.vixSizeBuckets) {
-    if (vix <= bucket.maxVix) return clamp(bucket.multiplier, 0, 1);
-  }
-  return clamp(cfg.vixSizeBuckets[cfg.vixSizeBuckets.length - 1]?.multiplier ?? 1, 0, 1);
+  if (vix === null || !Number.isFinite(vix) || vix <= 0) return 1;
+  if (vix <= cfg.vixReference) return 1;
+  return round2(clamp(cfg.vixReference / vix, cfg.minSizeMultiplier, 1));
 }
 
 /** Pure function so it can be unit tested without Schwab. */

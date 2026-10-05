@@ -67,9 +67,14 @@ Sells bullish put credit spreads systematically against the Schwab Trader API:
   is tested, and the day before expiration if it is in the money.
 - **Places orders only with `--confirm`**: a NET_CREDIT vertical to open, then, after the fill, a
   GTC NET_DEBIT close at 50% of the actual credit. Every alert contains the exact command to act.
+- **Sizes like a quant book**: 1% max loss per spread, 10% aggregate, contracts scaled by
+  18 / VIX, new entries paused when the VIX term structure is in backwardation or VIX ≥ 35, one
+  spread per name, trend as a hard gate for single stocks and a half-size factor for index ETFs.
 
-The research behind the defaults is in [`docs/put-spread-strategy-research.md`](docs/put-spread-strategy-research.md);
-the API details are in [`docs/schwab-api-reference.md`](docs/schwab-api-reference.md).
+The research behind the defaults is in three documents:
+- [`docs/put-spread-strategy-research.md`](docs/put-spread-strategy-research.md) — the retail rule set (45 DTE, 50% target, 21 DTE, 1/3 width).
+- [`docs/quant-strategy-research.md`](docs/quant-strategy-research.md) — the known quant strategies: academic variance-risk-premium literature and Cboe PUT index evidence, practitioner backtests (spintwig, Option Alpha, FlashAlpha, ORATS), risk management (Kelly, vol targeting, drawdown breakers, crash case studies) and entry signals (IV vs realised, term structure, trend, skew), with a synthesis mapping each finding to a config value.
+- [`docs/schwab-api-reference.md`](docs/schwab-api-reference.md) — the API details.
 
 ```
 Schwab chains + price history → scanner (filters + score) → "rich premium" email/SMS → open --confirm
@@ -107,8 +112,8 @@ Sample "good premium" alert:
    Max profit $180 / max loss $320 per spread · POP ~70% · breakeven 578.2
    • Collect 1.80 on a 5-wide spread (36% of width, clears the 1/3 rule)
    • IV 25% vs 20d realized 18% (1.39x) — options are pricing more movement than the stock is showing
-   Size at 2% risk: 6 spreads
-   → npm run spreads -- open SPY 2026-11-20 580 575 --qty 6 --credit 1.80 --confirm
+   Size at 1% risk: 3 spreads
+   → npm run spreads -- open SPY 2026-11-20 580 575 --qty 3 --credit 1.80 --confirm
 ```
 Sample close prompt:
 ```
@@ -125,6 +130,7 @@ Sample close prompt:
 | `src/schwab/schwab-auth.ts` | OAuth login, token file, 30-min refresh, 7-day expiry warning |
 | `src/schwab/schwab-client.ts` | Rate-limited (120/min) client: chains, quotes, price history, positions, orders |
 | `src/schwab/strategy-config.ts` | Every strategy threshold with its env override |
+| `src/schwab/regime.ts` | VIX vol-targeting multiplier and VIX/VIX3M term-structure gate |
 | `src/schwab/spread-math.ts` | Credit, width, ROR, POP, EV, profit-captured, sizing, SMA, realized vol |
 | `src/schwab/put-spread-scanner.ts` | Chain → candidates → filters → 0–100 score → "good premium" test |
 | `src/schwab/position-monitor.ts` | Pairs legs into spreads, 50/65% · 2x · 21 DTE · tested · assignment rules |
@@ -132,7 +138,7 @@ Sample close prompt:
 | `src/schwab/notifier.ts` | Email (nodemailer) + SMS (Twilio or carrier gateway) with cooldown dedupe |
 | `src/schwab/earnings-calendar.ts` | Earnings dates from env/JSON/Finnhub (Schwab has no endpoint) |
 | `src/schwab/put-spread-monitor.ts` | The CLI |
-| `tests/` | 27 unit tests: `npm test` |
+| `tests/` | 31 unit tests: `npm test` |
 
 ## Notes and limits
 - IV **rank** needs a year of IV history Schwab does not provide; the scanner uses IV vs 20-day

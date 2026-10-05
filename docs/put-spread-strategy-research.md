@@ -230,7 +230,8 @@ VRP > 0, prefer IV/RV ≥ 1.1–1.2.
 | Earnings | none before expiration | — | `SPREAD_EARNINGS_BLACKOUT` |
 | Trend | price above 50 and 200 SMA | 20/50/200 | `SPREAD_TREND_SMA_PERIODS` |
 | Liquidity per leg | OI ≥ 500, volume ≥ 50, bid-ask ≤ 10% of mid or ≤ $0.10 | OI 500–1000, vol 100–500 | `SPREAD_MIN_OPEN_INTEREST`, `SPREAD_MIN_VOLUME`, `SPREAD_MAX_BID_ASK_PCT`, `SPREAD_MAX_BID_ASK_ABS` |
-| Risk per trade | 2% of liquidation value | 1–5% | `SPREAD_RISK_PER_TRADE_PCT` |
+| Risk per trade | 1% of liquidation value (see quant-strategy-research.md for the Kelly derivation) | 1–5% | `SPREAD_RISK_PER_TRADE_PCT` |
+| Aggregate risk | 10% of liquidation value across all open spreads | 25–50% in looser guides | `SPREAD_MAX_AGGREGATE_RISK_PCT` |
 | Max concurrent | 10 spreads, 1 per underlying | — | `SPREAD_MAX_OPEN`, `SPREAD_MAX_PER_UNDERLYING` |
 | Assignment guard | short ITM and DTE ≤ 1 → close | — | built in |
 

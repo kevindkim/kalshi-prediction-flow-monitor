@@ -203,7 +203,7 @@ export function buildOpportunityAlert(
   const multiplier = regime?.sizeMultiplier ?? 1;
   for (const c of candidates) {
     const fullQty = accountValue ? Math.floor((accountValue * cfg.riskPerTradePct) / c.maxLoss) : 1;
-    const qty = Math.max(1, Math.floor(fullQty * multiplier));
+    const qty = Math.max(1, Math.floor(fullQty * multiplier * c.sizeFactor));
     lines.push(`▶ ${c.underlying} $${c.underlyingPrice.toFixed(2)} — sell ${c.expiration} ${c.shortStrike}/${c.longStrike} put spread  [score ${c.score}]`);
     lines.push(`   Credit ~${c.midCredit.toFixed(2)} mid (${c.naturalCredit.toFixed(2)} natural) on $${c.width} width → ${Math.round(c.returnOnRisk * 100)}% on risk, ${c.dte} DTE`);
     lines.push(`   Max profit $${c.maxProfit} / max loss $${c.maxLoss} per spread · POP ~${Math.round(c.probOtm * 100)}% · breakeven ${c.breakeven}`);
@@ -211,7 +211,7 @@ export function buildOpportunityAlert(
     lines.push(
       `   Size at ${Math.round(cfg.riskPerTradePct * 100)}% risk: ${qty} spread${qty === 1 ? '' : 's'}${
         multiplier < 1 ? ` (×${multiplier} for the vol regime)` : ''
-      }${accountValue ? '' : ' (account value unknown)'}`
+      }${c.sizeFactor < 1 ? ` (×${c.sizeFactor} weak trend)` : ''}${accountValue ? '' : ' (account value unknown)'}`
     );
     lines.push(`   → npm run spreads -- open ${c.underlying} ${c.expiration} ${c.shortStrike} ${c.longStrike} --qty ${qty} --credit ${c.midCredit.toFixed(2)} --confirm`);
     lines.push('');

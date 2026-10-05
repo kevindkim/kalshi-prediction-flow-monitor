@@ -54,6 +54,8 @@ export interface SpreadCandidate {
   longBidAskPct: number;
   aboveSmas: Record<number, boolean>;
   trendOk: boolean;
+  isIndex: boolean;
+  sizeFactor: number; // 1.0, or 0.5 for an index ETF below its SMAs
   nextEarnings: string | null;
   earningsInWindow: boolean;
   score: number; // 0-100
@@ -96,6 +98,10 @@ export function buildCandidates(
     aboveSmas[p] = s === null || s === undefined ? true : price > s; // unknown SMA = don't block
   }
   const trendOk = Object.values(aboveSmas).every(Boolean);
+  const isIndex = cfg.indexSymbols.includes(chain.symbol.toUpperCase());
+  // Trend is a hard gate for single stocks (below the 200-SMA daily moves roughly double);
+  // for index ETFs the evidence is mixed, so a weak trend halves size instead.
+  const sizeFactor = trendOk ? 1 : isIndex ? 0.5 : 0;
 
   for (const [expKey, strikes] of Object.entries(chain.putExpDateMap ?? {})) {
     const { expiration, dte } = expirationFromKey(expKey);
@@ -106,7 +112,8 @@ export function buildCandidates(
 
     const contracts: OptionContract[] = Object.values(strikes)
       .map((arr) => arr[0])
-      .filter((c): c is OptionContract => !!c && !c.nonStandard && c.bid >= 0 && c.ask > 0)
+      // bid = 0 or ask = 0 means a one-sided/stale quote — reject (Aug 5 2024 lesson)
+      .filter((c): c is OptionContract => !!c && !c.nonStandard && c.bid > 0 && c.ask > 0)
       .sort((a, b) => a.strikePrice - b.strikePrice);
 
     for (const short of contracts) {
@@ -140,7 +147,8 @@ export function buildCandidates(
 
         const probOtm = probabilityOtmFromDelta(delta);
         const probProfit = probabilityOfProfit(width, credit);
-        const ev = expectedValueDollars(width, credit, probOtm);
+        // EV net of slippage: realistic fills land ~4–7¢ worse than mid (FlashAlpha)
+        const ev = expectedValueDollars(width, Math.max(0, credit - cfg.expectedSlippage), probOtm);
         if (ev < cfg.minExpectedValue) continue;
         const ivToHv = ctx.hv20 && ctx.hv20 > 0 ? round2(short.volatility / ctx.hv20) : null;
 
@@ -177,6 +185,8 @@ export function buildCandidates(
           longBidAskPct: round2(longSpreadPct),
           aboveSmas,
           trendOk,
+          isIndex,
+          sizeFactor,
           nextEarnings: ctx.nextEarnings,
           earningsInWindow,
           score: 0,
@@ -251,7 +261,11 @@ export function describeCandidate(c: SpreadCandidate, cfg: StrategyConfig): stri
     const below = Object.entries(c.aboveSmas)
       .filter(([, ok]) => !ok)
       .map(([p]) => `${p}-day`);
-    r.push(`⚠️ Underlying is below its ${below.join(' and ')} SMA — bullish thesis is weaker`);
+    r.push(
+      c.isIndex
+        ? `⚠️ Below its ${below.join(' and ')} SMA — index trend is mixed evidence, so size is halved`
+        : `⚠️ Below its ${below.join(' and ')} SMA — single stocks below trend are rejected`
+    );
   }
   if (c.earningsInWindow) r.push(`⚠️ Earnings ${c.nextEarnings} falls before expiration`);
   else if (c.nextEarnings) r.push(`Next earnings ${c.nextEarnings} (after expiration)`);
@@ -263,19 +277,24 @@ export function describeCandidate(c: SpreadCandidate, cfg: StrategyConfig): stri
 export function isGoodPremium(c: SpreadCandidate, cfg: StrategyConfig): boolean {
   if (c.score < cfg.goodPremiumMinScore) return false;
   if (c.creditToWidth < cfg.goodCreditToWidth) return false;
-  if (!c.trendOk) return false;
+  if (c.sizeFactor <= 0) return false; // single stock below trend
   if (c.earningsInWindow) return false;
   if (c.ivToHv !== null && c.ivToHv < cfg.minIvToHvRatio) return false;
   return true;
 }
 
-/** Keep the single best spread per underlying+expiration so alerts aren't 40 near-duplicates. */
-export function bestPerExpiration(candidates: SpreadCandidate[]): SpreadCandidate[] {
+/**
+ * Keep the single best spread per underlying+expiration so alerts aren't 40
+ * near-duplicates. Spreads that clear the 1/3-of-width rule are preferred over
+ * cheaper ones regardless of score, then highest score, then return on risk.
+ */
+export function bestPerExpiration(candidates: SpreadCandidate[], cfg: StrategyConfig): SpreadCandidate[] {
+  const rank = (c: SpreadCandidate): number => (c.creditToWidth >= cfg.goodCreditToWidth ? 1000 : 0) + c.score;
   const best = new Map<string, SpreadCandidate>();
   for (const c of candidates) {
     const key = `${c.underlying}_${c.expiration}`;
     const cur = best.get(key);
-    if (!cur || c.score > cur.score || (c.score === cur.score && c.returnOnRisk > cur.returnOnRisk)) best.set(key, c);
+    if (!cur || rank(c) > rank(cur) || (rank(c) === rank(cur) && c.returnOnRisk > cur.returnOnRisk)) best.set(key, c);
   }
   return [...best.values()].sort((a, b) => b.score - a.score);
 }

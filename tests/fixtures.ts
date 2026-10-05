@@ -23,12 +23,15 @@ export function testConfig(overrides: Partial<StrategyConfig> = {}): StrategyCon
     minIvToHvRatio: 1.0,
     minIvRank: 30,
     trendSmaPeriods: [50, 200],
+    indexSymbols: ['SPY', 'QQQ', 'IWM'],
+    expectedSlippage: 0.05,
     earningsBlackout: true,
     profitTargetPct: 0.5,
     profitPromptMinPct: 0.5,
     profitPromptMaxPct: 0.65,
     stopLossMultiple: 2,
     riskPerTradePct: 0.02,
+    maxAggregateRiskPct: 0.1,
     maxOpenSpreads: 10,
     maxPerUnderlying: 1,
     goodPremiumMinScore: 65,
@@ -84,9 +87,9 @@ export function spyChain(expiration = '2026-11-20', dte = 45, specs?: ContractSp
     { strike: 560, bid: 1.9, ask: 2.0, delta: -0.13 },
     { strike: 565, bid: 2.5, ask: 2.6, delta: -0.16 },
     { strike: 570, bid: 3.25, ask: 3.35, delta: -0.2 },
-    { strike: 575, bid: 4.5, ask: 4.6, delta: -0.25 },
-    { strike: 580, bid: 6.3, ask: 6.4, delta: -0.3 },
-    { strike: 585, bid: 8.1, ask: 8.2, delta: -0.36 },
+    { strike: 575, bid: 4.7, ask: 4.8, delta: -0.25 },
+    { strike: 580, bid: 6.5, ask: 6.6, delta: -0.3 },
+    { strike: 585, bid: 8.3, ask: 8.4, delta: -0.36 },
   ];
   const strikes: Record<string, OptionContract[]> = {};
   for (const s of ladder) strikes[`${s.strike}.0`] = [contract('SPY', expiration, dte, s)];

@@ -9,7 +9,10 @@ import 'dotenv/config';
  *   - list spreads collecting ≥ 20% of width; alert only at ≥ 1/3 of width (tastytrade rule)
  *   - take profit at 50% of max credit, prompt between 50% and 65%
  *   - stop out at 2x credit received (i.e. loss = 100% of credit, 200% of credit as closing debit)
- *   - risk 1–5% of account per spread, max 10 names
+ *   - risk 1% of account per spread, ≤ 10% of account at risk across all spreads, max 10 names
+ *   - trend (above 50/200 SMA) is a hard gate for single stocks and a half-size factor for index ETFs
+ *   - expected value is computed net of ~$0.05 of slippage per spread
+ * See docs/quant-strategy-research.md for the evidence behind each default.
  * Every value can be overridden with an environment variable.
  */
 export interface StrategyConfig {
@@ -32,12 +35,15 @@ export interface StrategyConfig {
   minIvToHvRatio: number; // implied vs 20-day realized vol; >1 = premium rich
   minIvRank: number; // only used when an external IV rank is provided
   trendSmaPeriods: number[]; // underlying must be above all of these
+  indexSymbols: string[]; // ETFs where a weak trend halves size instead of rejecting
+  expectedSlippage: number; // $/share per spread taken off the credit before computing EV
   earningsBlackout: boolean;
   profitTargetPct: number; // 0.50
   profitPromptMinPct: number; // 0.50
   profitPromptMaxPct: number; // 0.65
   stopLossMultiple: number; // close when debit >= credit * (1 + multiple) → 2.0 = 2x credit
-  riskPerTradePct: number; // of account liquidation value
+  riskPerTradePct: number; // of account liquidation value, max loss per spread
+  maxAggregateRiskPct: number; // sum of max losses across open spreads, as a fraction of account
   maxOpenSpreads: number;
   maxPerUnderlying: number;
   goodPremiumMinScore: number; // 0-100 scanner score needed to notify
@@ -97,12 +103,15 @@ export function loadStrategyConfig(): StrategyConfig {
     minIvToHvRatio: num('SPREAD_MIN_IV_HV_RATIO', 1.0),
     minIvRank: num('SPREAD_MIN_IV_RANK', 30),
     trendSmaPeriods: list('SPREAD_TREND_SMA_PERIODS', ['50', '200']).map(Number),
+    indexSymbols: list('SPREAD_INDEX_SYMBOLS', ['SPY', 'QQQ', 'IWM', 'DIA', 'XSP', 'SPX']),
+    expectedSlippage: num('SPREAD_EXPECTED_SLIPPAGE', 0.05),
     earningsBlackout: bool('SPREAD_EARNINGS_BLACKOUT', true),
     profitTargetPct: num('SPREAD_PROFIT_TARGET_PCT', 0.5),
     profitPromptMinPct: num('SPREAD_PROFIT_PROMPT_MIN_PCT', 0.5),
     profitPromptMaxPct: num('SPREAD_PROFIT_PROMPT_MAX_PCT', 0.65),
     stopLossMultiple: num('SPREAD_STOP_LOSS_MULTIPLE', 2.0),
-    riskPerTradePct: num('SPREAD_RISK_PER_TRADE_PCT', 0.02),
+    riskPerTradePct: num('SPREAD_RISK_PER_TRADE_PCT', 0.01),
+    maxAggregateRiskPct: num('SPREAD_MAX_AGGREGATE_RISK_PCT', 0.1),
     maxOpenSpreads: num('SPREAD_MAX_OPEN', 10),
     maxPerUnderlying: num('SPREAD_MAX_PER_UNDERLYING', 1),
     goodPremiumMinScore: num('SPREAD_GOOD_PREMIUM_MIN_SCORE', 65),

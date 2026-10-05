@@ -58,14 +58,31 @@ test('earnings before expiration blocks the spread when blackout is on, penalise
 });
 
 test('weak trend or IV below realized vol disqualifies a candidate from alerts', () => {
-  const good = bestPerExpiration(buildCandidates(spyChain(), ctx(), testConfig()))[0];
+  const good = bestPerExpiration(buildCandidates(spyChain(), ctx(), testConfig()), testConfig())[0];
   assert.ok(isGoodPremium(good, testConfig()), `score ${good.score}`);
-  const belowSma = bestPerExpiration(buildCandidates(spyChain(), ctx({ smas: { 50: 610, 200: 560 } }), testConfig()))[0];
+  // SPY is an index ETF: a weak trend halves size but can still alert
+  const belowSma = bestPerExpiration(buildCandidates(spyChain(), ctx({ smas: { 50: 610, 200: 560 } }), testConfig()), testConfig())[0];
   assert.equal(belowSma.trendOk, false);
-  assert.ok(!isGoodPremium(belowSma, testConfig()));
-  const cheapIv = bestPerExpiration(buildCandidates(spyChain(), ctx({ hv20: 40 }), testConfig()))[0];
+  assert.equal(belowSma.isIndex, true);
+  assert.equal(belowSma.sizeFactor, 0.5);
+  // the same chain treated as a single stock is rejected outright
+  const asStock = bestPerExpiration(
+    buildCandidates(spyChain(), ctx({ smas: { 50: 610, 200: 560 } }), testConfig({ indexSymbols: [] })),
+    testConfig({ indexSymbols: [] })
+  )[0];
+  assert.equal(asStock.sizeFactor, 0);
+  assert.ok(!isGoodPremium(asStock, testConfig({ indexSymbols: [] })));
+  const cheapIv = bestPerExpiration(buildCandidates(spyChain(), ctx({ hv20: 40 }), testConfig()), testConfig())[0];
   assert.ok(cheapIv.ivToHv! < 1);
   assert.ok(!isGoodPremium(cheapIv, testConfig()));
+});
+
+test('one-sided quotes (bid = 0) are rejected', () => {
+  const chain = spyChain('2026-11-20', 45, [
+    { strike: 575, bid: 0, ask: 4.6, delta: -0.25 },
+    { strike: 580, bid: 6.3, ask: 6.4, delta: -0.3 },
+  ]);
+  assert.equal(buildCandidates(chain, ctx(), testConfig()).length, 0);
 });
 
 test('NaN greeks are skipped instead of crashing', () => {
@@ -77,13 +94,15 @@ test('NaN greeks are skipped instead of crashing', () => {
   assert.ok(cands.every((c) => c.shortStrike === 575));
 });
 
-test('bestPerExpiration keeps one spread per underlying/expiration, highest score first', () => {
+test('bestPerExpiration keeps one spread per underlying/expiration, preferring the 1/3 rule then score', () => {
   const cands = buildCandidates(spyChain(), ctx(), testConfig());
   assert.ok(cands.length > 1);
-  const best = bestPerExpiration(cands);
+  const best = bestPerExpiration(cands, testConfig());
   assert.equal(best.length, 1);
-  assert.equal(best[0].score, Math.max(...cands.map((c) => c.score)));
-  // the alert-worthy spread must clear the 1/3-of-width rule even though cheaper ones are listed
+  // the alert-worthy spread must clear the 1/3-of-width rule even though cheaper ones are listed,
+  // and among rule-clearing spreads it is the highest scored
   assert.ok(best[0].creditToWidth >= 0.33);
   assert.ok(cands.some((c) => c.creditToWidth < 0.33));
+  const ruleClearing = cands.filter((c) => c.creditToWidth >= 0.33);
+  assert.equal(best[0].score, Math.max(...ruleClearing.map((c) => c.score)));
 });
