@@ -1,11 +1,13 @@
 {
   "name": "prediction-flow-monitor",
   "version": "1.0.0",
-  "description": "",
+  "description": "Kalshi big-trade flow monitor plus a Schwab bull put credit spread scanner/monitor with email & SMS prompts",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "ts-node src/kalshi-client.ts"
+    "start": "ts-node src/kalshi-client.ts",
+    "spreads": "ts-node src/schwab/put-spread-monitor.ts",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "node --require ts-node/register --test 'tests/**/*.test.ts'"
   },
   "keywords": [],
   "author": "",
@@ -13,8 +15,10 @@
   "type": "commonjs",
   "dependencies": {
     "@types/node": "^24.9.1",
+    "@types/nodemailer": "^8.0.2",
     "@types/ws": "^8.18.1",
     "dotenv": "^17.2.3",
+    "nodemailer": "^10.0.15",
     "ws": "^8.18.3"
   },
   "devDependencies": {

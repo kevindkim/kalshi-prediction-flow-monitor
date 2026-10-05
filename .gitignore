@@ -5,3 +5,6 @@ out/
 .env
 *.log
 kalshi-private-key.pem
+schwab-tokens.json
+.spread-alerts.json
+earnings.json
